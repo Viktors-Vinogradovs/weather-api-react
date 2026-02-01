@@ -15,6 +15,7 @@ const VALID_UNITS = ['metric', 'imperial', 'standard'];
 router.get('/', async (req, res) => {
   try {
     const units = req.query.units || 'metric';
+    const force = req.query.force === 'true' || req.headers['x-force-refresh'] === 'true';
     
     if (!VALID_UNITS.includes(units)) {
       return res.status(400).json({
@@ -25,7 +26,7 @@ router.get('/', async (req, res) => {
       });
     }
 
-    const data = await fetchAllCitiesWeather(units);
+    const data = await fetchAllCitiesWeather(units, force);
     res.json(data);
   } catch (error) {
     const status = error.status || 500;
@@ -47,6 +48,7 @@ router.get('/:cityId', async (req, res) => {
   try {
     const { cityId } = req.params;
     const units = req.query.units || 'metric';
+    const force = req.query.force === 'true' || req.headers['x-force-refresh'] === 'true';
 
     // Validate cityId is a number
     if (!/^\d+$/.test(cityId)) {
@@ -77,7 +79,7 @@ router.get('/:cityId', async (req, res) => {
       });
     }
 
-    const data = await fetchCityWeather(cityId, units);
+    const data = await fetchCityWeather(cityId, units, force);
     res.json(data);
   } catch (error) {
     const status = error.status || 500;

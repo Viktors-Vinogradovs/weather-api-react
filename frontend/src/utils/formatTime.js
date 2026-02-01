@@ -71,3 +71,32 @@ export function formatWindDirection(deg) {
   const index = Math.round(deg / 22.5) % 16;
   return directions[index];
 }
+
+/**
+ * Format timestamp as "Updated X minutes ago"
+ * @param {number} timestamp - Unix timestamp in milliseconds
+ * @returns {string} Relative time string
+ */
+export function formatRelativeTime(timestamp) {
+  if (!timestamp) return '';
+  
+  const now = Date.now();
+  const diffMs = now - timestamp;
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffSecs = Math.floor(diffMs / 1000);
+
+  if (diffSecs < 60) {
+    return 'Updated just now';
+  }
+  if (diffMins === 1) {
+    return 'Updated 1 minute ago';
+  }
+  if (diffMins < 60) {
+    return `Updated ${diffMins} minutes ago`;
+  }
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours === 1) {
+    return 'Updated 1 hour ago';
+  }
+  return `Updated ${diffHours} hours ago`;
+}

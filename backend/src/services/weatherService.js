@@ -1,4 +1,5 @@
 import { CITIES } from '../config/cities.js';
+import * as cache from '../utils/cache.js';
 
 const API_BASE = 'https://api.openweathermap.org/data/2.5';
 
@@ -47,50 +48,80 @@ function normalizeWeatherData(data) {
 async function fetchSingleCity(cityId, units, apiKey) {
   const url = `${API_BASE}/weather?id=${cityId}&units=${units}&appid=${apiKey}`;
   const response = await fetch(url);
-  
+
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     console.error(`Failed to fetch city ${cityId}:`, errorData.message);
-    return null; // Return null for failed cities, don't break the whole request
+    return null;
   }
-  
+
   return response.json();
 }
 
 /**
- * Fetch weather for all configured cities using individual calls
- * (Free tier compatible - no group endpoint needed)
+ * Fetch weather for all configured cities (internal, bypasses cache)
  */
-export async function fetchAllCitiesWeather(units = 'metric') {
+async function fetchAllCitiesWeatherInternal(units, apiKey) {
+  const cityIds = CITIES.map(c => c.id);
+  const cityMeta = Object.fromEntries(CITIES.map(c => [c.id, { name: c.name, country: c.country }]));
+
+  const promises = cityIds.map(id => fetchSingleCity(id, units, apiKey));
+  const results = await Promise.allSettled(promises);
+
+  const cities = results.map((result, index) => {
+    const cityId = cityIds[index];
+    const meta = cityMeta[cityId];
+
+    if (result.status === 'fulfilled' && result.value !== null) {
+      return normalizeWeatherData(result.value);
+    }
+
+    return {
+      id: cityId,
+      name: meta.name,
+      country: meta.country,
+      unavailable: true,
+    };
+  });
+
+  return {
+    units,
+    cities,
+    lastUpdated: Date.now(),
+  };
+}
+
+/**
+ * Fetch weather for all configured cities
+ * Uses cache unless force=true
+ */
+export async function fetchAllCitiesWeather(units = 'metric', force = false) {
   const apiKey = process.env.OPENWEATHER_API_KEY;
-  
+
   if (!apiKey) {
     throw { code: 'CONFIG_ERROR', message: 'API key not configured', status: 500 };
   }
 
+  if (!force) {
+    const cached = cache.get('list', null, units);
+    if (cached) {
+      return cached;
+    }
+  }
+
   try {
-    // Fetch all cities in parallel using individual /weather calls
-    const cityIds = CITIES.map(c => c.id);
-    const promises = cityIds.map(id => fetchSingleCity(id, units, apiKey));
-    const results = await Promise.all(promises);
-    
-    // Filter out failed requests and normalize successful ones
-    const cities = results
-      .filter(data => data !== null)
-      .map(normalizeWeatherData);
-    
-    if (cities.length === 0) {
+    const data = await fetchAllCitiesWeatherInternal(units, apiKey);
+
+    if (data.cities.every(c => c.unavailable)) {
       throw {
         code: 'OPENWEATHER_ERROR',
         message: 'Failed to fetch weather data. Please check your API key.',
         status: 502,
       };
     }
-    
-    return {
-      units,
-      cities,
-    };
+
+    cache.set('list', null, units, data);
+    return data;
   } catch (error) {
     if (error.code) throw error;
     throw {
@@ -102,44 +133,60 @@ export async function fetchAllCitiesWeather(units = 'metric') {
 }
 
 /**
- * Fetch weather for a single city by ID
+ * Fetch weather for a single city by ID (internal, bypasses cache)
  */
-export async function fetchCityWeather(cityId, units = 'metric') {
+async function fetchCityWeatherInternal(cityId, units, apiKey) {
+  const url = `${API_BASE}/weather?id=${cityId}&units=${units}&appid=${apiKey}`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+
+    if (response.status === 404) {
+      throw {
+        code: 'CITY_NOT_FOUND',
+        message: `City with ID ${cityId} not found`,
+        status: 404,
+      };
+    }
+
+    throw {
+      code: 'OPENWEATHER_ERROR',
+      message: errorData.message || `OpenWeatherMap API error: ${response.status}`,
+      status: response.status === 401 ? 401 : 502,
+    };
+  }
+
+  const data = await response.json();
+  return {
+    units,
+    city: normalizeWeatherData(data),
+    lastUpdated: Date.now(),
+  };
+}
+
+/**
+ * Fetch weather for a single city by ID
+ * Uses cache unless force=true
+ */
+export async function fetchCityWeather(cityId, units = 'metric', force = false) {
   const apiKey = process.env.OPENWEATHER_API_KEY;
-  
+
   if (!apiKey) {
     throw { code: 'CONFIG_ERROR', message: 'API key not configured', status: 500 };
   }
 
-  const url = `${API_BASE}/weather?id=${cityId}&units=${units}&appid=${apiKey}`;
+  if (!force) {
+    const cached = cache.get('city', cityId, units);
+    if (cached) {
+      return cached;
+    }
+  }
 
   try {
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      
-      if (response.status === 404) {
-        throw {
-          code: 'CITY_NOT_FOUND',
-          message: `City with ID ${cityId} not found`,
-          status: 404,
-        };
-      }
-      
-      throw {
-        code: 'OPENWEATHER_ERROR',
-        message: errorData.message || `OpenWeatherMap API error: ${response.status}`,
-        status: response.status === 401 ? 401 : 502,
-      };
-    }
-
-    const data = await response.json();
-    
-    return {
-      units,
-      city: normalizeWeatherData(data),
-    };
+    const data = await fetchCityWeatherInternal(cityId, units, apiKey);
+    cache.set('city', cityId, units, data);
+    return data;
   } catch (error) {
     if (error.code) throw error;
     throw {
