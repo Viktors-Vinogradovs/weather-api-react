@@ -1,118 +1,100 @@
-import { CITIES } from '../config/cities.js';
+import * as citiesRepo from '../repositories/citiesRepository.js';
 import * as cache from '../utils/cache.js';
 
 const API_BASE = 'https://api.openweathermap.org/data/2.5';
 
-/**
- * Normalize a single city weather response from OpenWeatherMap
- * Ensures all fields are present (null when missing)
- */
-function normalizeWeatherData(data) {
+function normalizeWeatherData(apiData, dbCity) {
   return {
-    id: data.id,
-    name: data.name,
-    country: data.sys?.country || null,
+    id: dbCity.id,
+    name: apiData.name || dbCity.name,
+    country: apiData.sys?.country || dbCity.country,
     coord: {
-      lat: data.coord?.lat || null,
-      lon: data.coord?.lon || null,
+      lat: apiData.coord?.lat ?? dbCity.lat,
+      lon: apiData.coord?.lon ?? dbCity.lon,
     },
-    timezoneOffsetSec: data.timezone || 0,
+    timezoneOffsetSec: apiData.timezone || 0,
     weather: {
-      condition: data.weather?.[0]?.main || null,
-      description: data.weather?.[0]?.description || null,
-      icon: data.weather?.[0]?.icon || null,
-      temp: data.main?.temp ?? null,
-      feelsLike: data.main?.feels_like ?? null,
-      tempMin: data.main?.temp_min ?? null,
-      tempMax: data.main?.temp_max ?? null,
-      humidity: data.main?.humidity ?? null,
-      pressure: data.main?.pressure ?? null,
-      windSpeed: data.wind?.speed ?? null,
-      windDeg: data.wind?.deg ?? null,
-      windGust: data.wind?.gust ?? null,
-      clouds: data.clouds?.all ?? null,
-      visibility: data.visibility ?? null,
-      rain1h: data.rain?.['1h'] ?? null,
-      rain3h: data.rain?.['3h'] ?? null,
-      snow1h: data.snow?.['1h'] ?? null,
-      snow3h: data.snow?.['3h'] ?? null,
-      sunrise: data.sys?.sunrise ?? null,
-      sunset: data.sys?.sunset ?? null,
+      condition: apiData.weather?.[0]?.main || null,
+      description: apiData.weather?.[0]?.description || null,
+      icon: apiData.weather?.[0]?.icon || null,
+      temp: apiData.main?.temp ?? null,
+      feelsLike: apiData.main?.feels_like ?? null,
+      tempMin: apiData.main?.temp_min ?? null,
+      tempMax: apiData.main?.temp_max ?? null,
+      humidity: apiData.main?.humidity ?? null,
+      pressure: apiData.main?.pressure ?? null,
+      windSpeed: apiData.wind?.speed ?? null,
+      windDeg: apiData.wind?.deg ?? null,
+      windGust: apiData.wind?.gust ?? null,
+      clouds: apiData.clouds?.all ?? null,
+      visibility: apiData.visibility ?? null,
+      rain1h: apiData.rain?.['1h'] ?? null,
+      rain3h: apiData.rain?.['3h'] ?? null,
+      snow1h: apiData.snow?.['1h'] ?? null,
+      snow3h: apiData.snow?.['3h'] ?? null,
+      sunrise: apiData.sys?.sunrise ?? null,
+      sunset: apiData.sys?.sunset ?? null,
     },
   };
 }
 
-/**
- * Fetch weather for a single city by ID (internal helper)
- */
-async function fetchSingleCity(cityId, units, apiKey) {
-  const url = `${API_BASE}/weather?id=${cityId}&units=${units}&appid=${apiKey}`;
+async function fetchWeatherByCoords(lat, lon, units, apiKey) {
+  const url = `${API_BASE}/weather?lat=${lat}&lon=${lon}&units=${units}&appid=${apiKey}`;
   const response = await fetch(url);
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    console.error(`Failed to fetch city ${cityId}:`, errorData.message);
+    const err = await response.json().catch(() => ({}));
+    console.error(`Weather fetch failed for ${lat},${lon}:`, err.message);
     return null;
   }
-
   return response.json();
 }
 
-/**
- * Fetch weather for all configured cities (internal, bypasses cache)
- */
 async function fetchAllCitiesWeatherInternal(units, apiKey) {
-  const cityIds = CITIES.map(c => c.id);
-  const cityMeta = Object.fromEntries(CITIES.map(c => [c.id, { name: c.name, country: c.country }]));
+  const dbCities = await citiesRepo.findAll();
+  if (dbCities.length === 0) {
+    return { units, cities: [], lastUpdated: Date.now() };
+  }
 
-  const promises = cityIds.map(id => fetchSingleCity(id, units, apiKey));
+  const promises = dbCities.map((c) =>
+    fetchWeatherByCoords(parseFloat(c.lat), parseFloat(c.lon), units, apiKey)
+  );
   const results = await Promise.allSettled(promises);
 
-  const cities = results.map((result, index) => {
-    const cityId = cityIds[index];
-    const meta = cityMeta[cityId];
+  const cities = results.map((result, i) => {
+    const dbCity = dbCities[i];
+    const dbId = dbCity.id;
+    const meta = { name: dbCity.name, country: dbCity.country };
 
-    if (result.status === 'fulfilled' && result.value !== null) {
-      return normalizeWeatherData(result.value);
+    if (result.status === 'fulfilled' && result.value) {
+      return normalizeWeatherData(result.value, { id: dbId, ...meta, lat: dbCity.lat, lon: dbCity.lon });
     }
-
     return {
-      id: cityId,
+      id: dbId,
       name: meta.name,
       country: meta.country,
       unavailable: true,
     };
   });
 
-  return {
-    units,
-    cities,
-    lastUpdated: Date.now(),
-  };
+  return { units, cities, lastUpdated: Date.now() };
 }
 
-/**
- * Fetch weather for all configured cities
- * Uses cache unless force=true
- */
 export async function fetchAllCitiesWeather(units = 'metric', force = false) {
   const apiKey = process.env.OPENWEATHER_API_KEY;
-
   if (!apiKey) {
     throw { code: 'CONFIG_ERROR', message: 'API key not configured', status: 500 };
   }
 
   if (!force) {
     const cached = cache.get('list', null, units);
-    if (cached) {
-      return cached;
-    }
+    if (cached) return cached;
   }
 
   try {
     const data = await fetchAllCitiesWeatherInternal(units, apiKey);
 
-    if (data.cities.every(c => c.unavailable)) {
+    if (data.cities.length > 0 && data.cities.every((c) => c.unavailable)) {
       throw {
         code: 'OPENWEATHER_ERROR',
         message: 'Failed to fetch weather data. Please check your API key.',
@@ -122,77 +104,71 @@ export async function fetchAllCitiesWeather(units = 'metric', force = false) {
 
     cache.set('list', null, units, data);
     return data;
-  } catch (error) {
-    if (error.code) throw error;
+  } catch (err) {
+    if (err.code) throw err;
+    const isDbError = err.code === 'ECONNREFUSED' || err.message?.includes('connect') || err.message?.includes('ENOTFOUND');
     throw {
-      code: 'NETWORK_ERROR',
-      message: 'Failed to connect to weather service',
+      code: isDbError ? 'DATABASE_ERROR' : 'NETWORK_ERROR',
+      message: isDbError
+        ? 'Database connection failed. Is PostgreSQL running? Check DATABASE_URL in .env'
+        : 'Failed to connect to weather service',
+      status: isDbError ? 503 : 502,
+    };
+  }
+}
+
+async function fetchCityWeatherInternal(dbId, units, apiKey) {
+  const dbCity = await citiesRepo.findById(dbId);
+  if (!dbCity) {
+    throw { code: 'CITY_NOT_FOUND', message: 'City not found', status: 404 };
+  }
+
+  const lat = parseFloat(dbCity.lat);
+  const lon = parseFloat(dbCity.lon);
+  const apiData = await fetchWeatherByCoords(lat, lon, units, apiKey);
+
+  if (!apiData) {
+    throw {
+      code: 'OPENWEATHER_ERROR',
+      message: 'Failed to fetch weather for this city',
       status: 502,
     };
   }
+
+  const city = normalizeWeatherData(apiData, {
+    id: dbCity.id,
+    name: dbCity.name,
+    country: dbCity.country,
+    lat,
+    lon,
+  });
+  return { units, city, lastUpdated: Date.now() };
 }
 
-/**
- * Fetch weather for a single city by ID (internal, bypasses cache)
- */
-async function fetchCityWeatherInternal(cityId, units, apiKey) {
-  const url = `${API_BASE}/weather?id=${cityId}&units=${units}&appid=${apiKey}`;
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-
-    if (response.status === 404) {
-      throw {
-        code: 'CITY_NOT_FOUND',
-        message: `City with ID ${cityId} not found`,
-        status: 404,
-      };
-    }
-
-    throw {
-      code: 'OPENWEATHER_ERROR',
-      message: errorData.message || `OpenWeatherMap API error: ${response.status}`,
-      status: response.status === 401 ? 401 : 502,
-    };
-  }
-
-  const data = await response.json();
-  return {
-    units,
-    city: normalizeWeatherData(data),
-    lastUpdated: Date.now(),
-  };
-}
-
-/**
- * Fetch weather for a single city by ID
- * Uses cache unless force=true
- */
-export async function fetchCityWeather(cityId, units = 'metric', force = false) {
+export async function fetchCityWeather(dbId, units = 'metric', force = false) {
   const apiKey = process.env.OPENWEATHER_API_KEY;
-
   if (!apiKey) {
     throw { code: 'CONFIG_ERROR', message: 'API key not configured', status: 500 };
   }
 
   if (!force) {
-    const cached = cache.get('city', cityId, units);
-    if (cached) {
-      return cached;
-    }
+    const cached = cache.get('city', dbId, units);
+    if (cached) return cached;
   }
 
   try {
-    const data = await fetchCityWeatherInternal(cityId, units, apiKey);
-    cache.set('city', cityId, units, data);
+    const data = await fetchCityWeatherInternal(dbId, units, apiKey);
+    cache.set('city', dbId, units, data);
     return data;
-  } catch (error) {
-    if (error.code) throw error;
+  } catch (err) {
+    if (err.code) throw err;
+    const isDbError = err.code === 'ECONNREFUSED' || err.message?.includes('connect') || err.message?.includes('ENOTFOUND');
     throw {
-      code: 'NETWORK_ERROR',
-      message: 'Failed to connect to weather service',
-      status: 502,
+      code: isDbError ? 'DATABASE_ERROR' : 'NETWORK_ERROR',
+      message: isDbError
+        ? 'Database connection failed. Is PostgreSQL running? Check DATABASE_URL in .env'
+        : 'Failed to connect to weather service',
+      status: isDbError ? 503 : 502,
     };
   }
 }

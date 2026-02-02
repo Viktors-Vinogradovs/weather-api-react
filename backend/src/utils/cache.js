@@ -40,3 +40,19 @@ export function has(type, identifier, units) {
   const entry = get(type, identifier, units);
   return entry !== null;
 }
+
+export function invalidateList() {
+  for (const key of cache.keys()) {
+    if (key.startsWith('list:')) {
+      cache.delete(key);
+    }
+  }
+}
+
+export function invalidateCity(dbId) {
+  for (const key of cache.keys()) {
+    if (key.startsWith(`city:${dbId}:`)) {
+      cache.delete(key);
+    }
+  }
+}
