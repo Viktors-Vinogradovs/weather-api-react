@@ -4,6 +4,7 @@ import CityCard from '../components/CityCard';
 import CityCardSkeleton from '../components/CityCardSkeleton';
 import ErrorState from '../components/ErrorState';
 import RefreshButton from '../components/RefreshButton';
+import AddCityModal from '../components/AddCityModal';
 import { formatRelativeTime } from '../utils/formatTime';
 
 const SKELETON_COUNT = 10;
@@ -15,6 +16,7 @@ export default function CityListPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
 
   const fetchWeather = async (force = false) => {
     const isRefresh = !loading && force;
@@ -41,6 +43,20 @@ export default function CityListPage() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const handleRemoveCity = async (cityId) => {
+    if (!confirm('Remove this city from your list?')) return;
+    try {
+      const res = await fetch(`/api/cities/${cityId}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error?.message || 'Failed to remove city');
+      }
+      fetchWeather(true);
+    } catch (err) {
+      setError(err.message);
     }
   };
 
@@ -79,6 +95,15 @@ export default function CityListPage() {
               {formatRelativeTime(lastUpdated)}
             </span>
           )}
+          <button
+            onClick={() => setModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors text-sm font-medium"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add City
+          </button>
           <RefreshButton
             onClick={() => fetchWeather(true)}
             loading={refreshing}
@@ -88,12 +113,25 @@ export default function CityListPage() {
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {cities.map((city) => (
-          <CityCard key={city.id} city={city} />
+          <CityCard key={city.id} city={city} onRemove={handleRemoveCity} />
         ))}
       </div>
       {cities.length === 0 && !loading && (
-        <p className="text-center text-gray-500 py-8">No cities to display</p>
+        <div className="text-center py-12">
+          <p className="text-gray-500 mb-4">No cities yet. Add your first city to get started.</p>
+          <button
+            onClick={() => setModalOpen(true)}
+            className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+          >
+            Add City
+          </button>
+        </div>
       )}
+      <AddCityModal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onAdded={() => fetchWeather(true)}
+      />
     </div>
   );
 }
