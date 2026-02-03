@@ -4,93 +4,160 @@ A weather dashboard application that displays current weather for cities worldwi
 
 ## Features
 
-- **City List View**: Display weather cards for cities from the database
-- **Add City**: Search by name and add cities to your list
-- **Remove City**: Delete cities from your list
-- **City Detail View**: Detailed weather statistics (temp, humidity, wind, pressure, visibility, sunrise/sunset)
-- **Unit Switcher**: Metric (°C), Imperial (°F), Standard (K)
-- **Caching**: 5-minute in-memory cache with force refresh
-- **Responsive Design**: Tailwind CSS
+* **City List View**: Display weather cards for cities from the database
+* **Add City**: Search by name and add cities to your list
+* **Remove City**: Delete cities from your list (with confirmation)
+* **City Detail View**: Detailed weather statistics (temp, humidity, wind, pressure, visibility, sunrise/sunset)
+* **Unit Switcher**: Metric (°C), Imperial (°F), Standard (K)
+* **Caching**: 5-minute in-memory cache with force refresh
+* **Responsive Design**: Tailwind CSS
 
-## Tech Stack
-
-- **Frontend**: React 18, Vite, Tailwind CSS, React Router
-- **Backend**: Node.js, Express
-- **Database**: PostgreSQL (Docker)
-- **API**: OpenWeatherMap (Weather + Geocoding)
-
-## Prerequisites
-
-- Docker & Docker Compose
-- OpenWeatherMap API key ([get one free](https://openweathermap.org/api))
-
-## Getting Started
+## Quickstart (Docker)
 
 ```bash
-# 1. Copy env file and add your API key
+# 1. Copy env file and set your OpenWeather API key
 cp .env.example .env
 # Edit .env and set OPENWEATHER_API_KEY=your_actual_key
 
-# 2. Start everything with Docker
-docker-compose up --build
+# 2. Start all services
+docker compose up --build
 ```
 
-Open **http://localhost:5173**. Postgres is initialized automatically with 10 cities.
+Open **[http://localhost:5173](http://localhost:5173)**. The database is initialized automatically with 10 cities.
 
-### Commands
+## Diagrams
 
-| Command | Description |
-|---------|-------------|
-| `docker-compose up --build` | Start all services |
-| `docker-compose up -d` | Start in background |
-| `docker-compose down` | Stop services |
-| `docker-compose down -v` | Stop and remove database (fresh start) |
+### User Workflow
+
+```mermaid
+flowchart TD
+  A[Open app] --> B[Load city list]
+  B --> C[Fetch weather for cities]
+  C --> D[Render weather cards]
+
+  D --> E{User action}
+  E -->|Switch units| F[Refetch with units]
+  F --> D
+
+  E -->|Open city| G[City detail view]
+  G --> H[Show detailed stats]
+  H --> G
+
+  E -->|Refresh| I[Force refresh: bypass cache]
+  I --> C
+
+  E -->|Add city| J[Open Add City modal]
+  J --> K[Search by name]
+  K --> L[Select result]
+  L --> M[Save city to DB]
+  M --> C
+
+  E -->|Remove city| N[Confirm deletion]
+  N --> O[Delete city from DB]
+  O --> C
+```
+
+### System Architecture
+
+```mermaid
+flowchart LR
+  subgraph FE[Frontend (React + Tailwind)]
+    UI[Pages & Components<br/>- CityList<br/>- CityDetail<br/>- AddCityModal<br/>- Unit Switcher]
+  end
+
+  subgraph BE[Backend (Node/Express)]
+    API[REST API<br/>/api/weather<br/>/api/cities<br/>/api/cities/search]
+    Cache[In-memory cache<br/>TTL 5 min<br/>force bypass]
+    DBAccess[DB access layer]
+    OWProxy[OpenWeather proxy]
+  end
+
+  subgraph DB[(PostgreSQL)]
+    Cities[cities table<br/>id, name, country, state, lat, lon]
+  end
+
+  subgraph OWM[(OpenWeather APIs)]
+    Geo[Geocoding API<br/>/geo/1.0/direct]
+    Weather[Current Weather API<br/>/data/2.5/weather]
+  end
+
+  UI -->|HTTP| API
+  API --> Cache
+  API --> DBAccess --> Cities
+  API --> OWProxy --> Geo
+  API --> OWProxy --> Weather
+```
+
+### Add City Sequence (Search → Select → Persist)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as User
+  participant FE as React UI
+  participant BE as Node API
+  participant OWM as OpenWeather
+  participant PG as PostgreSQL
+
+  U->>FE: Type query (e.g. "London")
+  FE->>BE: GET /api/cities/search?q=London
+  BE->>OWM: GET /geo/1.0/direct?q=London&limit=5&appid=...
+  OWM-->>BE: results (name,country,state,lat,lon)
+  BE-->>FE: results
+  U->>FE: Click a result
+  FE->>BE: POST /api/cities {name,country,state,lat,lon}
+  BE->>PG: INSERT city (unique lat/lon)
+  PG-->>BE: created row
+  BE-->>FE: 201 Created
+  FE->>BE: GET /api/weather?units=metric
+  BE->>PG: SELECT cities
+  loop For each city
+    BE->>OWM: GET /data/2.5/weather?lat=...&lon=...&units=metric
+    OWM-->>BE: weather data
+  end
+  BE-->>FE: normalized city list weather
+  FE-->>U: Updated weather list shown
+```
+
+## Environment Variables
+
+| Variable              | Required | Description                              |
+| --------------------- | -------- | ---------------------------------------- |
+| `OPENWEATHER_API_KEY` | Yes      | Get a free key at openweathermap.org/api |
+
+`DATABASE_URL` is set automatically by Docker Compose — do not override.
+
+## Reset DB
+
+```bash
+docker compose down -v
+docker compose up --build
+```
+
+## Troubleshooting
+
+| Problem                              | Solution                                                  |
+| ------------------------------------ | --------------------------------------------------------- |
+| Failed to connect to weather service | Ensure OPENWEATHER_API_KEY is set in .env                 |
+| Database connection failed           | Run docker compose down -v then docker compose up --build |
+| Ports in use                         | Stop other processes or change docker-compose.yml         |
+| Backend exits on startup             | Run docker compose logs backend                           |
+
+## Optional: Local Development
+
+1. Start PostgreSQL and create database weather
+2. Run backend/scripts/init.sql and seed.sql
+3. Set DATABASE_URL in backend/.env
+4. Run backend and frontend
 
 ## API Endpoints
 
-### Weather
-- `GET /api/weather?units=metric&force=true` — List weather for all cities
-- `GET /api/weather/:id?units=metric&force=true` — Weather for one city (id = DB id)
-
-### Cities
-- `GET /api/cities` — List all cities in DB
-- `GET /api/cities/search?q=London` — Search cities (Geocoding API)
-- `POST /api/cities` — Add city `{ name, country, state?, lat, lon }`
-- `DELETE /api/cities/:id` — Remove city
-
-## Project Structure
-
-```
-weather-api-react/
-├── backend/
-│   ├── src/
-│   │   ├── index.js
-│   │   ├── db/
-│   │   ├── repositories/
-│   │   ├── routes/
-│   │   │   ├── weather.js
-│   │   │   └── cities.js
-│   │   ├── services/
-│   │   │   ├── weatherService.js
-│   │   │   ├── citiesService.js
-│   │   │   └── geocodingService.js
-│   │   └── utils/
-│   │       └── cache.js
-│   ├── scripts/
-│   │   ├── init.sql      # Runs on first Postgres start
-│   │   └── seed.sql      # Seeds 10 initial cities
-│   └── Dockerfile
-├── frontend/
-│   └── src/
-│       ├── pages/
-│       ├── components/
-│       │   ├── AddCityModal.jsx
-│       │   ├── CityCard.jsx
-│       │   └── ...
-│       └── ...
-├── docker-compose.yml
-└── .env.example
-```
+* GET /api/weather
+* GET /api/weather/:id
+* GET /api/cities
+* GET /api/cities/search
+* POST /api/cities
+* DELETE /api/cities/:id
 
 ## License
 

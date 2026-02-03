@@ -61,7 +61,8 @@ export default function AddCityModal({ isOpen, onClose, onAdded }) {
       onAdded?.();
       onClose();
     } catch (err) {
-      setError(err.message);
+      const msg = err.message || 'Failed to add city';
+      setError(msg.includes('already') ? 'This city is already in your list.' : msg);
     } finally {
       setAdding(false);
     }
@@ -108,8 +109,10 @@ export default function AddCityModal({ isOpen, onClose, onAdded }) {
           )}
           <div className="mt-4 max-h-60 overflow-y-auto">
             {loading && <p className="text-sm text-gray-500">Searching...</p>}
-            {!loading && query.trim() && results.length === 0 && !error && (
-              <p className="text-sm text-gray-500">No results found</p>
+            {!loading && debouncedQuery.trim() && results.length === 0 && !error && (
+              <p className="text-sm text-gray-500">
+                No results found for &quot;{debouncedQuery}&quot;
+              </p>
             )}
             {!loading && results.length > 0 && (
               <ul className="space-y-1">
