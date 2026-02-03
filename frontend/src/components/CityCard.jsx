@@ -24,7 +24,7 @@ export default function CityCard({ city, onRemove }) {
 
   if (unavailable) {
     return (
-      <div className="relative block bg-white rounded-xl shadow-md p-5 border-2 border-dashed border-gray-200">
+      <div className="relative block bg-gray-50 rounded-xl shadow-sm p-5 border-2 border-dashed border-gray-300 cursor-not-allowed">
         {onRemove && (
           <button
             onClick={handleRemove}
