@@ -1,7 +1,5 @@
-version: '3.8'
-
 services:
-  postgres:
+  db:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: weather
@@ -28,9 +26,9 @@ services:
     environment:
       - PORT=3000
       - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
-      - DATABASE_URL=postgres://weather:weather@postgres:5432/weather
+      - DATABASE_URL=postgres://weather:weather@db:5432/weather
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
     restart: unless-stopped
 
