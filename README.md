@@ -57,37 +57,6 @@ flowchart TD
   O --> C
 ```
 
-### System Architecture
-
-```mermaid
-flowchart LR
-  subgraph FE[Frontend (React + Tailwind)]
-    UI[Pages & Components<br/>- CityList<br/>- CityDetail<br/>- AddCityModal<br/>- Unit Switcher]
-  end
-
-  subgraph BE[Backend (Node/Express)]
-    API[REST API<br/>/api/weather<br/>/api/cities<br/>/api/cities/search]
-    Cache[In-memory cache<br/>TTL 5 min<br/>force bypass]
-    DBAccess[DB access layer]
-    OWProxy[OpenWeather proxy]
-  end
-
-  subgraph DB[(PostgreSQL)]
-    Cities[cities table<br/>id, name, country, state, lat, lon]
-  end
-
-  subgraph OWM[(OpenWeather APIs)]
-    Geo[Geocoding API<br/>/geo/1.0/direct]
-    Weather[Current Weather API<br/>/data/2.5/weather]
-  end
-
-  UI -->|HTTP| API
-  API --> Cache
-  API --> DBAccess --> Cities
-  API --> OWProxy --> Geo
-  API --> OWProxy --> Weather
-```
-
 ### Add City Sequence (Search → Select → Persist)
 
 ```mermaid
